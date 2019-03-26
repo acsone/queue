@@ -146,7 +146,15 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import requests
 
 import odoo
-from odoo.tools import config
+try:
+    from odoo.addons.server_environment import serv_config as config
+    if config.has_section('queue_job'):
+        queue_job_config = config['queue_job']
+    else:
+        queue_job_config = {}
+except ImportError:
+    from odoo.tools import config
+    queue_job_config = config.misc.get('queue_job', {})
 
 from .channels import ChannelManager, PENDING, ENQUEUED, NOT_DONE
 
@@ -170,8 +178,7 @@ session = requests.Session()
 def _channels():
     return (
         os.environ.get('ODOO_QUEUE_JOB_CHANNELS') or
-        config.misc.get("queue_job", {}).get("channels") or
-        "root:1"
+        queue_job_config.get("channels") or "root:1"
     )
 
 
@@ -191,8 +198,7 @@ def _connection_info_for(db_name):
 
     for p in ('host', 'port'):
         cfg = (os.environ.get('ODOO_QUEUE_JOB_JOBRUNNER_DB_%s' % p.upper()) or
-               config.misc
-               .get("queue_job", {}).get('jobrunner_db_' + p))
+               queue_job_config.get("jobrunner_db_" + p))
 
         if cfg:
             connection_info[p] = cfg
