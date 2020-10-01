@@ -18,6 +18,35 @@ How does it work?
 * It does not run jobs itself, but asks Odoo to run them through an
   anonymous ``/queue_job/runjob`` HTTP request. [1]_
 
+How does concurrent job runners work?
+-------------------------------------
+
+If several nodes (on different hosts or not) of job runners are started,
+a shared lock ensures that only one job runner works on a database at
+a time. These rules are to take in consideration:
+
+* The identifier of the shared lock is based on the database list provided,
+  so either ``--database``/``db_name`` or all the databases in PostgreSQL.
+* When 2 job runners with the exact same list of databases are started,
+  only the first one will work. The second one will wait and take over
+  if the first one is stopped.
+
+Caveats:
+
+* If 2 job runners have a database in common but a different list (e.g.
+  ``db_name=project1,project2`` and ``db_name=project2,project3``), both job
+  runners will work and listen to ``project2``, which will lead to unexpected
+  behavior.
+* The same applies when no database is specified and all the cluster's databases
+  are used. If a job runner is started on the cluster's databases, a new database
+  is created and a second job runner is started, they'll both work on a same set
+  of databases with unexpected behaviors.
+* PostgreSQL advisory locks are based on a integer, the list of database names
+  is sorted, hashed and converted to an int64, so we lose information in the
+  identifier. A low risk of collision is possible. If it happens some day, we
+  should add an option for a custom lock identifier.
+
+
 How to use it?
 --------------
 
@@ -94,7 +123,7 @@ How to use it?
   ...INFO...queue_job.jobrunner.runner: starting
   ...INFO...queue_job.jobrunner.runner: initializing database connections
   ...INFO...queue_job.jobrunner.runner: queue job runner ready for db <dbname>
-  ...INFO...queue_job.jobrunner.runner: database connections ready for: <dbname>
+  ...INFO...queue_job.jobrunner.runner: database connections ready
 
 * Create jobs (eg using base_import_async) and observe they
   start immediately and in parallel.
@@ -134,6 +163,7 @@ Caveat
 """
 
 import datetime
+import hashlib
 import logging
 import os
 import select
@@ -153,6 +183,7 @@ from .channels import ENQUEUED, NOT_DONE, PENDING, ChannelManager
 
 SELECT_TIMEOUT = 60
 TRY_ACQUIRE_INTERVAL = 30  # seconds
+SHARED_LOCK_KEEP_ALIVE = 60  # seconds
 ERROR_RECOVERY_DELAY = 5
 
 _logger = logging.getLogger(__name__)
@@ -269,31 +300,59 @@ def _async_http_get(scheme, host, port, user, password, db_name, job_uuid):
     thread.start()
 
 
-class Database(object):
+class SharedLockDatabase(object):
+    def __init__(self, db_name, lock_name):
+        self.db_name = db_name
+        self.lock_ident = self.name_to_int64(lock_name)
+        connection_info = _connection_info_for(db_name)
+        self.conn = psycopg2.connect(**connection_info)
+        self.conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        self.acquired = False
+        self.try_acquire()
 
-    ADVISORY_LOCK_IDENT = 8373372352660922455
+    @staticmethod
+    def name_to_int64(lock_name):
+        hasher = hashlib.sha256()
+        hasher.update(lock_name.encode("utf-8"))
+        # pg_try_advisory_lock is limited to an 8-byte (64bit) signed integer
+        return int.from_bytes(hasher.digest()[:8], byteorder="big", signed=True)
 
+    def try_acquire(self):
+        self.acquired = self._acquire()
+
+    def _acquire(self):
+        with closing(self.conn.cursor()) as cr:
+            # session level lock
+            cr.execute("SELECT pg_try_advisory_lock(%s);", (self.lock_ident,))
+            acquired = cr.fetchone()[0]
+        return acquired
+
+    def keep_alive(self):
+        query = "SELECT 1"
+        with closing(self.conn.cursor()) as cr:
+            cr.execute(query)
+
+    def close(self):
+        # pylint: disable=except-pass
+        # if close fail for any reason, it's either because it's already closed
+        # and we don't care, or for any reason but anyway it will be closed on
+        # del
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self.conn = None
+
+
+class QueueDatabase(object):
     def __init__(self, db_name):
         self.db_name = db_name
         connection_info = _connection_info_for(db_name)
         self.conn = psycopg2.connect(**connection_info)
         self.conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         self.has_queue_job = self._has_queue_job()
-        self.acquired = False
         if self.has_queue_job:
-            self.try_acquire()
-
-    def try_acquire(self):
-        if self._acquire():
-            self.acquired = True
             self._initialize()
-
-    def _acquire(self):
-        with closing(self.conn.cursor()) as cr:
-            # session level lock
-            cr.execute("SELECT pg_try_advisory_lock(%s);", (self.ADVISORY_LOCK_IDENT,))
-            acquired = cr.fetchone()[0]
-        return acquired
 
     def close(self):
         # pylint: disable=except-pass
@@ -368,10 +427,12 @@ class QueueJobRunner(object):
         if channel_config_string is None:
             channel_config_string = _channels()
         self.channel_manager.simple_configure(channel_config_string)
+
+        self.shared_lock_db = None
         # TODO: how to detect new databases or databases
         #       on which queue_job is installed after server start?
-        self.database_names = self.get_db_names()
-        self.started_db_by_name = {}
+        self.list_db_names = self.get_db_names()
+        self.db_by_name = {}
         self._stop = False
         self._stop_pipe = os.pipe()
 
@@ -413,37 +474,37 @@ class QueueJobRunner(object):
         return db_names
 
     def close_databases(self, remove_jobs=True):
-        for db_name, db in self.started_db_by_name.items():
+        for db_name, db in self.db_by_name.items():
             try:
                 if remove_jobs:
                     self.channel_manager.remove_db(db_name)
                 db.close()
             except Exception:
                 _logger.warning("error closing database %s", db_name, exc_info=True)
-        self.started_db_by_name = {}
+
+        self.db_by_name = {}
+
+        if self.shared_lock_db:
+            try:
+                self.shared_lock_db.close()
+            except Exception:
+                _logger.warning(
+                    "error closing database %s",
+                    self.shared_lock_db.db_name,
+                    exc_info=True,
+                )
 
     def initialize_databases(self):
-        for db_name in self.database_names:
-            if db_name in self.started_db_by_name:
-                continue
-            db = Database(db_name)
+        for db_name in self.list_db_names:
+            db = QueueDatabase(db_name)
             if not db.has_queue_job:
                 _logger.debug("queue_job is not installed for db %s", db_name)
-            elif not db.acquired:
-                _logger.debug(
-                    "queue job runner already started on another node for db %s",
-                    db_name,
-                )
             else:
-                self.started_db_by_name[db_name] = db
-                self._start_database(db_name)
-
-    def _start_database(self, db_name):
-        db = self.started_db_by_name[db_name]
-        with db.select_jobs("state in %s", (NOT_DONE,)) as cr:
-            for job_data in cr:
-                self.channel_manager.notify(db_name, *job_data)
-        _logger.info("queue job runner ready for db %s", db_name)
+                self.db_by_name[db_name] = db
+                with db.select_jobs("state in %s", (NOT_DONE,)) as cr:
+                    for job_data in cr:
+                        self.channel_manager.notify(db_name, *job_data)
+                _logger.info("queue job runner ready for db %s", db_name)
 
     def run_jobs(self):
         now = _odoo_now()
@@ -451,7 +512,7 @@ class QueueJobRunner(object):
             if self._stop:
                 break
             _logger.info("asking Odoo to run job %s on db %s", job.uuid, job.db_name)
-            self.started_db_by_name[job.db_name].set_job_enqueued(job.uuid)
+            self.db_by_name[job.db_name].set_job_enqueued(job.uuid)
             _async_http_get(
                 self.scheme,
                 self.host,
@@ -463,7 +524,7 @@ class QueueJobRunner(object):
             )
 
     def process_notifications(self):
-        for db in self.started_db_by_name.values():
+        for db in self.db_by_name.values():
             while db.conn.notifies:
                 if self._stop:
                     break
@@ -477,13 +538,13 @@ class QueueJobRunner(object):
                         self.channel_manager.remove_job(uuid)
 
     def wait_notification(self):
-        for db in self.started_db_by_name.values():
+        for db in self.db_by_name.values():
             if db.conn.notifies:
                 # something is going on in the queue, no need to wait
                 return
         # wait for something to happen in the queue_job tables
         # we'll select() on database connections and the stop pipe
-        conns = [db.conn for db in self.started_db_by_name.values()]
+        conns = [db.conn for db in self.db_by_name.values()]
         conns.append(self._stop_pipe[0])
         # look if the channels specify a wakeup time
         wakeup_time = self.channel_manager.get_wakeup_time()
@@ -507,6 +568,12 @@ class QueueJobRunner(object):
                 for conn in conns:
                     conn.poll()
 
+    def keep_alive_shared_lock(self):
+        self.shared_lock_db.keep_alive()
+
+    def _lock_ident(self):
+        return "-".join(sorted(self.list_db_names))
+
     def stop(self):
         _logger.info("graceful stop requested")
         self._stop = True
@@ -518,41 +585,42 @@ class QueueJobRunner(object):
         while not self._stop:
             # outer loop does exception recovery
             try:
-                _logger.info("initializing database connections")
-                started_dbs = set(self.started_db_by_name.keys())
-                # inner loop does the normal processing
-                last_check = None
-                while not self._stop:
+                # When concurrent jobrunners are started, the first to win the
+                # race acquires an advisory lock on PostgreSQL and gets to
+                # work. When a jobrunner is stopped, the lock is released, and
+                # another node can take over.
+                self.shared_lock_db = SharedLockDatabase("postgres", self._lock_ident())
+                if not self.shared_lock_db.acquired:
+                    self.close_databases()
+                    _logger.info("already started on another node")
+                    # no database to work with... retry later in case a concurrent
+                    # node is stopped
+                    time.sleep(TRY_ACQUIRE_INTERVAL)
+                    continue
 
-                    # After jobs have been executed or after max. the select
-                    # timeout (max 60s), databases which are not handled by the
-                    # current runner are retried for acquiring a lock, in case
-                    # another node has stopped meanwhile.
-                    # When we run jobs, the loop restarts, so we could try
-                    # initialization of database every second, if we don't measure how
-                    # much time passed.
+                _logger.info("initializing database connections")
+                self.initialize_databases()
+                _logger.info("database connections ready")
+
+                last_keep_alive = None
+
+                # inner loop does the normal processing
+                while not self._stop:
+                    self.process_notifications()
+                    self.run_jobs()
+                    self.wait_notification()
                     if (
-                        not last_check
-                        or time.time() >= last_check + TRY_ACQUIRE_INTERVAL
+                        not last_keep_alive
+                        or time.time() >= last_keep_alive + SHARED_LOCK_KEEP_ALIVE
                     ):
-                        last_check = time.time()
-                        self.initialize_databases()
-                        if set(self.started_db_by_name.keys()) != started_dbs:
-                            _logger.info(
-                                "database connections ready for: {}".format(
-                                    ", ".join(self.started_db_by_name.keys())
-                                )
-                            )
-                        elif not self.started_db_by_name:
-                            _logger.info("no database to listen")
-                    if self.started_db_by_name:
-                        self.process_notifications()
-                        self.run_jobs()
-                        self.wait_notification()
-                    else:
-                        # no database to work with... retry later in case a concurrent
-                        # node is stopped
-                        time.sleep(TRY_ACQUIRE_INTERVAL)
+                        last_keep_alive = time.time()
+                        # send a keepalive on the shared lock connection at
+                        # most every 60 seconds
+                        self.keep_alive_shared_lock()
+                        # TODO here, when we have no "db_name", we could list again
+                        # the databases and if the list changed, try to acquire a new
+                        # lock
+
             except KeyboardInterrupt:
                 self.stop()
             except Exception as e:
