@@ -572,7 +572,7 @@ class QueueJobRunner(object):
         self.shared_lock_db.keep_alive()
 
     def _lock_ident(self):
-        return "-".join(sorted(self.list_db_names))
+        return "qj:{}".format("-".join(sorted(self.list_db_names)))
 
     def stop(self):
         _logger.info("graceful stop requested")
