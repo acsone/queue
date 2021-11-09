@@ -116,8 +116,13 @@
                 <field name="name" />
                 <field name="model_name" />
                 <field name="state" />
-                <field name="eta" />
                 <field name="date_created" />
+                <field
+                    name="eta"
+                    widget="remaining_days"
+                    string="Remaining days to execute"
+                    optional="hide"
+                />
                 <field name="date_done" />
                 <field name="exec_time" widget="float_time" />
                 <field name="exc_name" />
