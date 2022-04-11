@@ -113,22 +113,6 @@ Caveat
 * After creating a new database or installing queue_job on an
   existing database, Odoo must be restarted for the runner to detect it.
 
-* When Odoo shuts down normally, it waits for running jobs to finish.
-  However, when the Odoo server crashes or is otherwise force-stopped,
-  running jobs are interrupted while the runner has no chance to know
-  they have been aborted. In such situations, jobs may remain in
-  ``started`` or ``enqueued`` state after the Odoo server is halted.
-  Since the runner has no way to know if they are actually running or
-  not, and does not know for sure if it is safe to restart the jobs,
-  it does not attempt to restart them automatically. Such stale jobs
-  therefore fill the running queue and prevent other jobs to start.
-  You must therefore requeue them manually, either from the Jobs view,
-  or by running the following SQL statement *before starting Odoo*:
-
-.. code-block:: sql
-
-  update queue_job set state='pending' where state in ('started', 'enqueued')
-
 .. rubric:: Footnotes
 
 .. [1] From a security standpoint, it is safe to have an anonymous HTTP
@@ -334,6 +318,18 @@ class Database(object):
                        "WHERE uuid=%s",
                        (ENQUEUED, uuid))
 
+    def reset_dead_jobs(self):
+        """Set started or enqueued jobs to pending. Only run at server start."""
+        # When Odoo shuts down normally, it waits for running jobs to finish.
+        # However, when the Odoo server crashes or is otherwise force-stopped,
+        # running jobs are interrupted while the runner has no chance to know
+        # they have been aborted. In such situations, jobs may remain in
+        # ``started`` or ``enqueued`` state after the Odoo server is halted.
+        # inspired from https://github.com/OCA/queue/issues/386
+        with closing(self.conn.cursor()) as cr:
+            cr.execute("UPDATE queue_job SET state='pending'"
+                       "WHERE state in ('started', 'enqueued')")
+
 
 class QueueJobRunner(object):
 
@@ -382,6 +378,7 @@ class QueueJobRunner(object):
                 _logger.debug('queue_job is not installed for db %s', db_name)
             else:
                 self.db_by_name[db_name] = db
+		db.reset_dead_jobs()
                 with db.select_jobs('state in %s', (NOT_DONE,)) as cr:
                     for job_data in cr:
                         self.channel_manager.notify(db_name, *job_data)
