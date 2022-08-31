@@ -5,7 +5,7 @@ ci: GitHub
 dependency_installation_mode: PIP
 generate_requirements_txt: true
 include_wkhtmltopdf: false
-odoo_version: 15.0
+odoo_version: 16.0
 rebel_module_groups: []
 repo_description: Asynchronous Job Queue. Delay Model methods in asynchronous jobs,
   executed in the background as soon as possible or on a schedule. Support Channels

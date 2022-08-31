@@ -1,7 +1,7 @@
-[![Runbot Status](https://runbot.odoo-community.org/runbot/badge/flat/230/15.0.svg)](https://runbot.odoo-community.org/runbot/repo/github-com-oca-queue-230)
-[![Build Status](https://travis-ci.com/OCA/queue.svg?branch=15.0)](https://travis-ci.com/OCA/queue)
-[![codecov](https://codecov.io/gh/OCA/queue/branch/15.0/graph/badge.svg)](https://codecov.io/gh/OCA/queue)
-[![Translation Status](https://translation.odoo-community.org/widgets/queue-15-0/-/svg-badge.svg)](https://translation.odoo-community.org/engage/queue-15-0/?utm_source=widget)
+[![Runbot Status](https://runbot.odoo-community.org/runbot/badge/flat/230/16.0.svg)](https://runbot.odoo-community.org/runbot/repo/github-com-oca-queue-230)
+[![Build Status](https://travis-ci.com/OCA/queue.svg?branch=16.0)](https://travis-ci.com/OCA/queue)
+[![codecov](https://codecov.io/gh/OCA/queue/branch/16.0/graph/badge.svg)](https://codecov.io/gh/OCA/queue)
+[![Translation Status](https://translation.odoo-community.org/widgets/queue-16-0/-/svg-badge.svg)](https://translation.odoo-community.org/engage/queue-16-0/?utm_source=widget)
 
 <!-- /!\ do not modify above this line -->
 
