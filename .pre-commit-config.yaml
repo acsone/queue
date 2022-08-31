@@ -3,7 +3,6 @@ exclude: |
   # NOT INSTALLABLE ADDONS
   ^base_export_async/|
   ^base_import_async/|
-  ^queue_job/|
   ^queue_job_cron/|
   ^queue_job_subscribe/|
   ^test_base_import_async/|
@@ -53,7 +52,7 @@ repos:
           - --remove-duplicate-keys
           - --remove-unused-variables
   - repo: https://github.com/psf/black
-    rev: 21.9b0
+    rev: 22.3.0
     hooks:
       - id: black
   - repo: https://github.com/pre-commit/mirrors-prettier
