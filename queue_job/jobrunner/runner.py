@@ -114,22 +114,6 @@ Caveat
 * After creating a new database or installing queue_job on an
   existing database, Odoo must be restarted for the runner to detect it.
 
-* When Odoo shuts down normally, it waits for running jobs to finish.
-  However, when the Odoo server crashes or is otherwise force-stopped,
-  running jobs are interrupted while the runner has no chance to know
-  they have been aborted. In such situations, jobs may remain in
-  ``started`` or ``enqueued`` state after the Odoo server is halted.
-  Since the runner has no way to know if they are actually running or
-  not, and does not know for sure if it is safe to restart the jobs,
-  it does not attempt to restart them automatically. Such stale jobs
-  therefore fill the running queue and prevent other jobs to start.
-  You must therefore requeue them manually, either from the Jobs view,
-  or by running the following SQL statement *before starting Odoo*:
-
-.. code-block:: sql
-
-  update queue_job set state='pending' where state in ('started', 'enqueued')
-
 .. rubric:: Footnotes
 
 .. [1] From a security standpoint, it is safe to have an anonymous HTTP
@@ -343,6 +327,48 @@ class Database(object):
                 (ENQUEUED, uuid),
             )
 
+    def requeue_dead_jobs(self):
+        """
+        Set started and enqueued jobs but not locked to pending
+
+        A job is locked when it's being executed
+        When a job is killed, it releases the lock
+
+        Adding a buffer on 'date_enqueued' to check
+        that it has been enqueued for more than 10sec.
+        This prevents from requeuing jobs before they are actually started.
+
+        When Odoo shuts down normally, it waits for running jobs to finish.
+        However, when the Odoo server crashes or is otherwise force-stopped,
+        running jobs are interrupted while the runner has no chance to know
+        they have been aborted.
+        """
+        query = """
+            UPDATE
+                queue_job
+            SET
+                state='pending',
+                retry=retry+1
+            WHERE
+                id IN (
+                    SELECT
+                        job.id
+                    FROM
+                        queue_job_locks AS lock
+                        LEFT JOIN
+                            queue_job AS job
+                        ON
+                            lock.id = job.id
+                    WHERE
+                        job.state  in ('started','enqueued')
+                        AND date_enqueued <
+                        date_trunc('seconds',now() AT TIME ZONE 'utc' - INTERVAL '10 sec')
+                    FOR UPDATE SKIP LOCKED
+                );
+        """
+        with closing(self.conn.cursor()) as cr:
+            cr.execute(query)
+
 
 class QueueJobRunner(object):
     def __init__(
@@ -423,6 +449,11 @@ class QueueJobRunner(object):
                     for job_data in cr:
                         self.channel_manager.notify(db_name, *job_data)
                 _logger.info("queue job runner ready for db %s", db_name)
+
+    def requeue_dead_jobs(self):
+        for db in self.db_by_name.values():
+            if db.has_queue_job:
+                db.requeue_dead_jobs()
 
     def run_jobs(self):
         now = _odoo_now()
@@ -516,6 +547,7 @@ class QueueJobRunner(object):
                 _logger.info("database connections ready")
                 # inner loop does the normal processing
                 while not self._stop:
+                    self.requeue_dead_jobs()
                     self.process_notifications()
                     self.run_jobs()
                     self.wait_notification()
