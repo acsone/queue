@@ -31,3 +31,16 @@ def post_init_hook(cr, registry):
                 FOR EACH ROW EXECUTE PROCEDURE queue_job_notify();
         """
     )
+
+    # Create job lock table
+    cr.execute(
+        """
+            CREATE TABLE IF NOT EXISTS queue_job_locks (
+                id INT PRIMARY KEY,
+                CONSTRAINT
+                    foreign_key_queue_job
+                FOREIGN KEY (id)
+                REFERENCES queue_job (id) ON DELETE CASCADE
+            );
+        """
+    )
