@@ -238,6 +238,31 @@ class Job(object):
         recordset = cls.db_records_from_uuids(env, job_uuids)
         return {cls._load_from_db_record(record) for record in recordset}
 
+    def lock(self):
+        self.env.cr.execute(
+            """
+            SELECT
+                *
+            FROM
+                queue_job_locks
+            WHERE
+                id in (
+                    SELECT
+                        id
+                    FROM
+                        queue_job
+                    WHERE
+                        uuid = %s
+                        AND state='started'
+                )
+            FOR UPDATE;
+        """,
+            [self.uuid],
+        )
+
+        # 1 job should be locked
+        return 1 == len(self.env.cr.fetchall())
+
     @classmethod
     def _load_from_db_record(cls, job_db_record):
         stored = job_db_record
@@ -517,6 +542,9 @@ class Job(object):
 
         The job is executed with the user which has initiated it.
         """
+        if self.max_retries and self.retry >= self.max_retries:
+            raise FailedJobError("Max. retries (%d) reached" % (self.max_retries))
+
         self.retry += 1
         try:
             self.result = self.func(*tuple(self.args), **self.kwargs)
@@ -819,6 +847,23 @@ class Job(object):
         self.state = STARTED
         self.date_started = datetime.now()
         self.worker_pid = os.getpid()
+
+        # add job to list of lockable jobs
+        self.env.cr.execute(
+            """
+            INSERT INTO
+                queue_job_locks (id)
+            SELECT
+                id
+            FROM
+                queue_job
+            WHERE
+                uuid = %s
+            ON CONFLICT(id)
+            DO NOTHING;
+        """,
+            [self.uuid],
+        )
 
     def set_done(self, result=None):
         self.state = DONE

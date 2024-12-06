@@ -31,6 +31,10 @@ class RunJobController(http.Controller):
         job.set_started()
         job.store()
         env.cr.commit()
+        locked = job.lock()
+        if not locked:
+            # When job is considered as 'dead' before actually locking the job
+            raise OperationalError("Trying to lock job that wasn't started")
         _logger.debug("%s started", job)
 
         job.perform()
