@@ -114,22 +114,6 @@ Caveat
 * After creating a new database or installing queue_job on an
   existing database, Odoo must be restarted for the runner to detect it.
 
-* When Odoo shuts down normally, it waits for running jobs to finish.
-  However, when the Odoo server crashes or is otherwise force-stopped,
-  running jobs are interrupted while the runner has no chance to know
-  they have been aborted. In such situations, jobs may remain in
-  ``started`` or ``enqueued`` state after the Odoo server is halted.
-  Since the runner has no way to know if they are actually running or
-  not, and does not know for sure if it is safe to restart the jobs,
-  it does not attempt to restart them automatically. Such stale jobs
-  therefore fill the running queue and prevent other jobs to start.
-  You must therefore requeue them manually, either from the Jobs view,
-  or by running the following SQL statement *before starting Odoo*:
-
-.. code-block:: sql
-
-  update queue_job set state='pending' where state in ('started', 'enqueued')
-
 .. rubric:: Footnotes
 
 .. [1] From a security standpoint, it is safe to have an anonymous HTTP
@@ -343,6 +327,88 @@ class Database(object):
                 (ENQUEUED, uuid),
             )
 
+    def requeue_dead_jobs(self):
+        """
+        Set started and enqueued jobs but not locked to pending
+
+        A job is locked when it's being executed
+        When a job is killed, it releases the lock
+
+        Adding a buffer on 'date_enqueued' to check
+        that it has been enqueued for more than 10sec.
+        This prevents from requeuing jobs before they are actually started.
+
+        When Odoo shuts down normally, it waits for running jobs to finish.
+        However, when the Odoo server crashes or is otherwise force-stopped,
+        running jobs are interrupted while the runner has no chance to know
+        they have been aborted.
+        """
+
+        # identify job to requeue
+        query_id_state_job_to_requeue = """
+        SELECT
+            job.id, job.state, job.uuid
+        FROM
+            (SELECT id FROM queue_job_locks FOR UPDATE SKIP LOCKED ) AS lock
+            INNER JOIN
+                (
+                    SELECT
+                        id,state
+                    FROM
+                        queue_job
+                    WHERE
+                        state IN ('enqueued','started')
+                        AND date_enqueued <
+                        (now() AT TIME ZONE 'utc' - INTERVAL '10 sec')
+                ) AS job
+            ON
+                lock.id = job.id
+        """
+        with closing(self.conn.cursor()) as cr:
+            cr.execute(query_id_state_job_to_requeue)
+            job_to_requeue = cr.fetchall()
+            enqueued_jobs, started_jobs = [
+                job[0] for job in job_to_requeue if job[1] == "enqueued"
+            ], [job[0] for job in job_to_requeue if job[1] == "started"]
+
+            uuid_enqueued_jobs, uuid_started_jobs = [
+                job[2] for job in job_to_requeue if job[1] == "enqueued"
+            ], [job[2] for job in job_to_requeue if job[1] == "started"]
+            # dead enqueued jobs are set to pending without incrementing retry
+            if enqueued_jobs:
+                query_requeue_pending_job = """
+                UPDATE
+                    queue_job
+                SET
+                    state='pending'
+                WHERE
+                    id in %s;
+                """
+                cr.execute(query_requeue_pending_job, [tuple(enqueued_jobs)])
+
+                _logger.warning(
+                    "queue_job: requeuing 'enqueued' jobs with ids= %s",
+                    str(uuid_enqueued_jobs),
+                )
+
+            # dead started jobs are set to pending without incrementing retry
+            if started_jobs:
+                query_started_pending_job = """
+                UPDATE
+                    queue_job
+                SET
+                    state='pending',
+                    retry=retry+1
+                WHERE
+                    id in %s;
+                """
+                cr.execute(query_started_pending_job, [tuple(started_jobs)])
+
+                _logger.warning(
+                    "queue_job: requeuing 'started' jobs with ids= %s",
+                    str(uuid_started_jobs),
+                )
+
 
 class QueueJobRunner(object):
     def __init__(
@@ -423,6 +489,11 @@ class QueueJobRunner(object):
                     for job_data in cr:
                         self.channel_manager.notify(db_name, *job_data)
                 _logger.info("queue job runner ready for db %s", db_name)
+
+    def requeue_dead_jobs(self):
+        for db in self.db_by_name.values():
+            if db.has_queue_job:
+                db.requeue_dead_jobs()
 
     def run_jobs(self):
         now = _odoo_now()
@@ -516,6 +587,7 @@ class QueueJobRunner(object):
                 _logger.info("database connections ready")
                 # inner loop does the normal processing
                 while not self._stop:
+                    self.requeue_dead_jobs()
                     self.process_notifications()
                     self.run_jobs()
                     self.wait_notification()
