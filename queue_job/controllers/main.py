@@ -6,6 +6,7 @@ import logging
 import random
 import time
 import traceback
+from contextlib import contextmanager
 from io import StringIO
 
 from psycopg2 import OperationalError, errorcodes
@@ -25,6 +26,25 @@ PG_RETRY = 5  # seconds
 DEPENDS_MAX_TRIES_ON_CONCURRENCY_FAILURE = 5
 
 
+@contextmanager
+def _prevent_commit(cr):
+    """Context manager to prevent commits on a cursor.
+
+    Commiting while the job is not finished would release the job lock, causing
+    it to be started again by the dead jobs requeuer.
+    """
+
+    def forbidden_commit(*args, **kwargs):
+        raise RuntimeError("Commit is forbidden in queue jobs")
+
+    original_commit = cr.commit
+    cr.commit = forbidden_commit
+    try:
+        yield
+    finally:
+        cr.commit = original_commit
+
+
 class RunJobController(http.Controller):
     def _try_perform_job(self, env, job):
         """Try to perform the job."""
@@ -35,13 +55,15 @@ class RunJobController(http.Controller):
 
         _logger.debug("%s started", job)
 
-        job.perform()
-        # Triggers any stored computed fields before calling 'set_done'
-        # so that will be part of the 'exec_time'
-        env.flush_all()
-        job.set_done()
-        job.store()
-        env.flush_all()
+        assert env is job.env  # TODO refactor
+        with _prevent_commit(env.cr):
+            job.perform()
+            # Triggers any stored computed fields before calling 'set_done'
+            # so that will be part of the 'exec_time'
+            env.flush_all()
+            job.set_done()
+            job.store()
+            env.flush_all()
         env.cr.commit()
         _logger.debug("%s done", job)
 
