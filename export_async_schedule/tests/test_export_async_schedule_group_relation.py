@@ -1,0 +1,38 @@
+# Copyright 2026 ACSONE SA/NV
+# License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
+
+from datetime import datetime, timedelta
+
+from odoo.addons.queue_job.tests.common import trap_jobs
+
+from .common import TestExportAsyncScheduleGroupBase
+
+
+class TestExportAsyncScheduleGroupRelation(TestExportAsyncScheduleGroupBase):
+    def test_schedule_is_part_of_group(self):
+        self.assertTrue(self.schedule._is_part_of_group())
+        self.assertEqual(self.schedule.group_count, 1)
+        self.assertEqual(self.schedule.group_ids, self.group)
+
+    def test_schedule_not_part_of_group(self):
+        schedule_alone = self._create_standalone_schedule()
+        self.assertFalse(schedule_alone._is_part_of_group())
+        self.assertEqual(schedule_alone.group_count, 0)
+
+    def test_schedule_individual_export_allowed_when_not_in_group(self):
+        schedule_alone = self._create_standalone_schedule()
+        with trap_jobs() as trap:
+            schedule_alone.action_export()
+            trap.assert_jobs_count(1)
+
+    def test_schedule_run_schedule_skips_grouped(self):
+        # run_schedule calls action_export which silently skips grouped schedules
+        self.schedule.next_execution = datetime.now() - timedelta(hours=1)
+        with trap_jobs() as trap:
+            self.schedule.run_schedule()
+            # No job enqueued because action_export skips grouped schedules
+            trap.assert_jobs_count(0)
+
+    def test_action_view_groups(self):
+        action = self.schedule.action_view_groups()
+        self.assertEqual(action["res_id"], self.group.id)
