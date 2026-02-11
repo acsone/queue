@@ -28,9 +28,11 @@ Scheduled Asynchronous Export
 
 |badge1| |badge2| |badge3| |badge4| |badge5|
 
-Add a new Automation feature: Scheduled Exports. Based on an export list
-and a domain, an email is sent every X hours/days/weeks/months to a
-selection of users.
+Schedule automated exports sent by email at regular intervals (hours,
+days, weeks, months) to selected users.
+
+**Export Groups** allow bundling multiple exports into a single email
+with multiple attachments - useful for consolidated reporting.
 
 **Table of contents**
 
@@ -40,32 +42,62 @@ selection of users.
 Configuration
 =============
 
-The configuration of a scheduled export is based on export lists.
+Creating an Export List
+-----------------------
 
-To create an export list:
+1. Open any model's list view (e.g., Partners, Sales Orders)
+2. Select at least one record
+3. Click **Action → Export**
+4. Select fields to export
+5. Save the field list with a meaningful name
 
-- open the list view of the model to export
-- select at least one record, and open "Action → Export"
-- select the fields to export and save using "Save fields list".
+Configuring a Scheduled Export
+------------------------------
 
-To configure a scheduled export:
+Navigate to **Settings → Technical → Automation → Scheduled Exports**
+and create a new record with:
 
-- open "Settings → Technical → Automation → Scheduled Exports"
-- create a scheduled export by filling the form
+- Model and export list (created above)
+- Export domain (filter records to export)
+- Export format (CSV or Excel)
+- Recipients (users who will receive the export)
+- Schedule (frequency and next execution date)
+- Language (for field labels in the export)
 
-A Scheduled Action named "Send Scheduled Exports" checks every hour if
-Scheduled Exports have to be executed.
+A cron job runs hourly to execute scheduled exports and groups.
 
 Usage
 =====
 
-When the configuration of a Scheduled Export is done, their execution is
-automatic.
+When a scheduled export is configured, its execution is automatic based
+on the schedule.
 
-Users will receive an email containing a link to download the exported
-file at the specified frequency. The attachments stay in the database
-for 7 days by default (it can be changed with the system parameter
-``attachment.ttl``.
+Users receive an email with a download link for the exported file.
+Attachments remain in the database for 7 days by default (configurable
+via the ``attachment.ttl`` system parameter).
+
+Export Groups
+-------------
+
+Group multiple exports into a single email:
+
+1. Navigate to **Settings > Technical > Automation > Grouped Scheduled
+   Exports**
+2. Create a group specifying:
+
+   - Recipients (users with email addresses)
+   - Email template
+   - Exports to include (select from standalone exports or create new
+     ones)
+   - Schedule (interval, next execution, language)
+
+3. Use **Send Test Email Now** to verify configuration
+
+**Important**: When an export is added to a group, it automatically
+inherits the group's scheduling parameters (recipients, interval,
+language, etc.). Individual exports within a group cannot be executed
+separately - only the group's cron job triggers their execution as a
+batch.
 
 Known issues / Roadmap
 ======================
@@ -132,10 +164,13 @@ promote its widespread use.
 .. |maintainer-guewen| image:: https://github.com/guewen.png?size=40px
     :target: https://github.com/guewen
     :alt: guewen
+.. |maintainer-stephanemangin| image:: https://github.com/stephanemangin.png?size=40px
+    :target: https://github.com/stephanemangin
+    :alt: stephanemangin
 
-Current `maintainer <https://odoo-community.org/page/maintainer-role>`__:
+Current `maintainers <https://odoo-community.org/page/maintainer-role>`__:
 
-|maintainer-guewen| 
+|maintainer-guewen| |maintainer-stephanemangin| 
 
 This module is part of the `OCA/queue <https://github.com/OCA/queue/tree/17.0/export_async_schedule>`_ project on GitHub.
 
