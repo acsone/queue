@@ -32,6 +32,11 @@ Add a new Automation feature: Scheduled Exports. Based on an export list
 and a domain, an email is sent every X hours/days/weeks/months to a
 selection of users.
 
+This module also provides **Export Groups** that allow grouping multiple
+scheduled exports into a single email with multiple attachments. This is
+useful when you need to send multiple related exports together, for
+example daily reporting exports to an external system.
+
 **Table of contents**
 
 .. contents::
@@ -66,6 +71,27 @@ Users will receive an email containing a link to download the exported
 file at the specified frequency. The attachments stay in the database
 for 7 days by default (it can be changed with the system parameter
 ``attachment.ttl``.
+
+Export Groups
+-------------
+
+To group multiple exports into a single email:
+
+1. Go to **Settings > Technical > Automation > Grouped Exports**.
+2. Create a new group with:
+
+   - A name for the group
+   - The company (if multi-company)
+   - The recipient email address
+   - The email template to use
+   - The scheduled exports to include in the group
+   - The scheduling parameters (interval, next execution)
+
+3. Use the **Test Export** button to verify the configuration.
+
+When a scheduled export is part of a group, its individual execution is
+disabled. The cron job will automatically send the grouped exports at
+the scheduled time.
 
 Known issues / Roadmap
 ======================
@@ -132,10 +158,16 @@ promote its widespread use.
 .. |maintainer-guewen| image:: https://github.com/guewen.png?size=40px
     :target: https://github.com/guewen
     :alt: guewen
+.. |maintainer-rousseldenis| image:: https://github.com/rousseldenis.png?size=40px
+    :target: https://github.com/rousseldenis
+    :alt: rousseldenis
+.. |maintainer-stephanemangin| image:: https://github.com/stephanemangin.png?size=40px
+    :target: https://github.com/stephanemangin
+    :alt: stephanemangin
 
-Current `maintainer <https://odoo-community.org/page/maintainer-role>`__:
+Current `maintainers <https://odoo-community.org/page/maintainer-role>`__:
 
-|maintainer-guewen| 
+|maintainer-guewen| |maintainer-rousseldenis| |maintainer-stephanemangin| 
 
 This module is part of the `OCA/queue <https://github.com/OCA/queue/tree/17.0/export_async_schedule>`_ project on GitHub.
 
