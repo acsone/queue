@@ -1,11 +1,11 @@
 /** @odoo-module */
-
 import {ExportDataDialog} from "@web/views/view_dialogs/export_data_dialog";
 import {patch} from "@web/core/utils/patch";
 
-patch(ExportDataDialog.prototype, "base_export_async", {
+patch(ExportDataDialog.prototype, {
     setup() {
-        this._super();
+        super.setup();
+        // Add async property to existing state
         this.state.async = false;
     },
     onToggleExportAsync(value) {
