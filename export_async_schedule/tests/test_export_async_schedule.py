@@ -187,3 +187,6 @@ class TestExportAsyncSchedule(common.TransactionCase):
             )
 
             self.assertEqual(delay_args, expected_params)
+
+    def test_compute_display_name(self):
+        self.assertEqual(self.schedule.display_name, "res.partner: test")
