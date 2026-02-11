@@ -46,6 +46,7 @@ class TestExportAsyncSchedule(common.TransactionCase):
         )
 
     def test_fields_with_labels(self):
+        """Test export fields are converted to display labels."""
         export_fields = [
             "display_name",
             "email",
@@ -69,12 +70,11 @@ class TestExportAsyncSchedule(common.TransactionCase):
         self.assertEqual(result, expected)
 
     def test_prepare_export_params_compatible(self):
+        """Test export params with import_compat mode."""
         prepared = self.schedule._prepare_export_params()
         expected = {
             "context": {},
             "domain": [("is_company", "=", True)],
-            # in 'import compatible' mode, the header (label)
-            # is equal to the field name
             "fields": [
                 {"label": "display_name", "name": "display_name"},
                 {"label": "email", "name": "email"},
@@ -90,13 +90,12 @@ class TestExportAsyncSchedule(common.TransactionCase):
         self.assertDictEqual(prepared, expected)
 
     def test_prepare_export_params_friendly(self):
+        """Test export params with friendly labels."""
         self.schedule.import_compat = False
         prepared = self.schedule._prepare_export_params()
         expected = {
             "context": {},
             "domain": [("is_company", "=", True)],
-            # in 'import compatible' mode, the header (label)
-            # is equal to the field name
             "fields": [
                 {"label": "Display Name", "name": "display_name"},
                 {"label": "Email", "name": "email"},
@@ -112,13 +111,13 @@ class TestExportAsyncSchedule(common.TransactionCase):
         self.assertDictEqual(prepared, expected)
 
     def test_schedule_next_date(self):
+        """Test next execution date computation for various intervals."""
         start_date = datetime.now() + relativedelta(hours=1)
 
         def assert_next_schedule(interval, unit, expected):
             self.schedule.next_execution = start_date
             self.schedule.interval = interval
             self.schedule.interval_unit = unit
-
             self.assertEqual(self.schedule._compute_next_date(), expected)
 
         assert_next_schedule(1, "hours", start_date + relativedelta(hours=1))
@@ -143,29 +142,26 @@ class TestExportAsyncSchedule(common.TransactionCase):
         )
 
     def test_run_schedule(self):
+        """Test schedule execution only happens when next_execution is past."""
         in_future = datetime.now() + relativedelta(minutes=1)
         self.schedule.next_execution = in_future
         self.schedule.run_schedule()
-        # nothing happened because we have not reached the next execution
         self.assertEqual(self.schedule.next_execution, in_future)
 
         in_past = datetime.now() - relativedelta(minutes=1)
         self.schedule.next_execution = in_past
         self.schedule.run_schedule()
-        # it has been executed and the date changed to the next execution
         self.assertGreater(self.schedule.next_execution, in_past)
 
     def test_delay_job(self):
+        """Test export job is enqueued with correct parameters."""
         with mock_with_delay() as (delayable_cls, delayable):
             self.schedule.action_export()
 
-            # check 'with_delay()' part:
             self.assertEqual(delayable_cls.call_count, 1)
-            # arguments passed in 'with_delay()'
             delay_args, __ = delayable_cls.call_args
             self.assertEqual((self.env["delay.export"],), delay_args)
 
-            # check what's passed to the job method 'export'
             self.assertEqual(delayable.export.call_count, 1)
             delay_args, delay_kwargs = delayable.export.call_args
             expected_params = (
@@ -187,3 +183,7 @@ class TestExportAsyncSchedule(common.TransactionCase):
             )
 
             self.assertEqual(delay_args, expected_params)
+
+    def test_compute_display_name(self):
+        """Test export display name format."""
+        self.assertEqual(self.schedule.display_name, "Contact: test")
