@@ -1,7 +1,7 @@
 # Copyright 2019 Camptocamp
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
 
@@ -187,3 +187,35 @@ class TestExportAsyncSchedule(common.TransactionCase):
             )
 
             self.assertEqual(delay_args, expected_params)
+
+    def test_onchange_group_id(self):
+        # Create a group
+        group = self.env["export.async.schedule.group"].create(
+            {
+                "export_schedule_ids": [(6, 0, [self.schedule.id])],
+                "user_ids": [(6, 0, [self.env.ref("base.user_admin").id])],
+                "mail_template_id": self.env.ref(
+                    "export_async_schedule.mail_template_export_group"
+                ).id,
+                "active": False,
+                "next_execution": datetime.now() + timedelta(days=2),
+                "interval": 2,
+                "interval_unit": "weeks",
+                "end_of_month": True,
+                "lang": "fr_FR",
+            }
+        )
+        # Set group_id on schedule
+        self.schedule.group_id = group
+        # Trigger onchange
+        self.schedule._onchange_group_id()
+        self.assertFalse(self.schedule.active)
+        self.assertEqual(self.schedule.user_ids, group.user_ids)
+        self.assertEqual(self.schedule.next_execution, group.next_execution)
+        self.assertEqual(self.schedule.interval, 2)
+        self.assertEqual(self.schedule.interval_unit, "weeks")
+        self.assertTrue(self.schedule.end_of_month)
+        self.assertEqual(self.schedule.lang, "fr_FR")
+
+    def test_compute_display_name(self):
+        self.assertEqual(self.schedule.display_name, "res.partner: test")
