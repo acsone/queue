@@ -1,96 +1,69 @@
 # Copyright 2019 Camptocamp
+# Copyright 2026 ACSONE SA/NV
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
 from datetime import datetime
 
-from dateutil.relativedelta import relativedelta
-
 from odoo import api, fields, models
 from odoo.tools.safe_eval import safe_eval
-
-from odoo.addons.base.models.res_partner import _lang_get
 
 
 class ExportAsyncSchedule(models.Model):
     _name = "export.async.schedule"
+    _inherit = ["export.async.schedule.mixin", "mail.thread", "mail.activity.mixin"]
     _description = "Export Async Schedule"
+    _rec_name = "display_name"
 
-    active = fields.Boolean(default=True)
+    display_name = fields.Char(compute="_compute_display_name", store=True)
 
-    # Export configuration
+    # Override user_ids to define explicit relation table
+    user_ids = fields.Many2many(
+        relation="export_async_schedule_res_users_rel",
+        tracking=True,
+    )
     model_id = fields.Many2one(
-        comodel_name="ir.model", required=True, ondelete="cascade"
+        comodel_name="ir.model", required=True, ondelete="cascade", tracking=True
     )
     model_name = fields.Char(related="model_id.model", string="Model Name")
-    user_ids = fields.Many2many(
-        string="Recipients", comodel_name="res.users", required=True
-    )
-    domain = fields.Char(string="Export Domain", default=[])
+    domain = fields.Char(string="Export Domain", default=[], tracking=True)
     ir_export_id = fields.Many2one(
         comodel_name="ir.exports",
         string="Export List",
         required=True,
         domain="[('resource', '=', model_name)]",
         ondelete="restrict",
+        tracking=True,
     )
     export_format = fields.Selection(
         selection=[("csv", "CSV"), ("excel", "Excel")],
         default="csv",
         required=True,
+        tracking=True,
     )
-    import_compat = fields.Boolean(string="Import-compatible Export")
-    lang = fields.Selection(
-        _lang_get,
-        string="Language",
-        default=lambda self: self.env.lang,
-        help="Exports will be translated in this language.",
+    import_compat = fields.Boolean(string="Import-compatible Export", tracking=True)
+    group_id = fields.Many2one(
+        comodel_name="export.async.schedule.group",
+        string="Export Groups",
+        help="Groups that include this scheduled export.",
+        tracking=True,
     )
 
-    # Scheduling
-    next_execution = fields.Datetime(default=fields.Datetime.now, required=True)
-    interval = fields.Integer(default=1, required=True)
-    interval_unit = fields.Selection(
-        selection=[
-            ("hours", "Hour(s)"),
-            ("days", "Day(s)"),
-            ("weeks", "Week(s)"),
-            ("months", "Month(s)"),
-        ],
-        string="Unit",
-        default="months",
-        required=True,
-    )
-    end_of_month = fields.Boolean()
-
-    @api.depends("model_id", "ir_export_id")
+    @api.depends("model_id.name", "ir_export_id.name")
     def _compute_display_name(self):
         for record in self:
             record.display_name = f"{record.model_id.name}: {record.ir_export_id.name}"
 
-    def run_schedule(self):
-        for record in self:
-            if record.next_execution > datetime.now():
-                continue
-            record.action_export()
-            record.next_execution = record._compute_next_date()
-
-    def _compute_next_date(self):
-        next_execution = self.next_execution
-        if next_execution < datetime.now():
-            next_execution = datetime.now()
-        args = {self.interval_unit: self.interval}
-        if self.interval_unit == "months" and self.end_of_month:
-            # dateutil knows how to deal with variable days of months,
-            # it will put the latest possible day
-            args.update({"day": 31, "hour": 23, "minute": 59, "second": 59})
-        return next_execution + relativedelta(**args)
-
-    @api.onchange("end_of_month")
-    def onchange_end_of_month(self):
-        if self.end_of_month:
-            self.next_execution = self.next_execution + relativedelta(
-                day=31, hour=23, minute=59, second=59
-            )
+    @api.onchange("group_id")
+    def _onchange_group_id(self):
+        """Propagate values from group when schedule is added to a group."""
+        if self.group_id:
+            self.active = self.group_id.active
+            self.user_ids = self.group_id.user_ids
+            self.next_execution = self.group_id.next_execution
+            self.interval = self.group_id.interval
+            self.interval_unit = self.group_id.interval_unit
+            self.end_of_month = self.group_id.end_of_month
+            self.lang = self.group_id.lang
 
     @api.model
     def _get_fields_with_labels(self, model_name, export_fields):
@@ -129,7 +102,7 @@ class ExportAsyncSchedule(models.Model):
         else:
             export_fields = self._get_fields_with_labels(
                 self.model_name,
-                [export_field for export_field in export_fields],
+                list(export_fields),
             )
         export_format = self.export_format == "excel" and "xlsx" or self.export_format
         return {
@@ -143,8 +116,28 @@ class ExportAsyncSchedule(models.Model):
             "user_ids": self.user_ids.ids,
         }
 
+    def run_schedule(self):
+        for record in self:
+            if record.next_execution > datetime.now():
+                continue
+            record.action_export()
+            record.next_execution = record._compute_next_date()
+
     def action_export(self):
         for record in self:
+            if record.group_id:
+                continue
             record = record.with_context(lang=record.lang)
             params = record._prepare_export_params()
             record.env["delay.export"].with_delay().export(params)
+
+    def action_view_group(self):
+        self.ensure_one()
+        action = self.env["ir.actions.act_window"]._for_xml_id(
+            "export_async_schedule.action_export_async_schedule_group"
+        )
+        if self.group_id:
+            action["view_mode"] = "form"
+            action["res_id"] = self.group_id.id
+            action["views"] = [(False, "form")]
+        return action
