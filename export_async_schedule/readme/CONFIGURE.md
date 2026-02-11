@@ -1,15 +1,21 @@
-The configuration of a scheduled export is based on export lists.
+## Creating an Export List
 
-To create an export list:
+1. Open any model's list view (e.g., Partners, Sales Orders)
+2. Select at least one record
+3. Click **Action → Export**
+4. Select fields to export
+5. Save the field list with a meaningful name
 
-- open the list view of the model to export
-- select at least one record, and open "Action → Export"
-- select the fields to export and save using "Save fields list".
+## Configuring a Scheduled Export
 
-To configure a scheduled export:
+Navigate to **Settings → Technical → Automation → Scheduled Exports** and create a new
+record with:
 
-- open "Settings → Technical → Automation → Scheduled Exports"
-- create a scheduled export by filling the form
+- Model and export list (created above)
+- Export domain (filter records to export)
+- Export format (CSV or Excel)
+- Recipients (users who will receive the export)
+- Schedule (frequency and next execution date)
+- Language (for field labels in the export)
 
-A Scheduled Action named "Send Scheduled Exports" checks every hour if Scheduled Exports
-have to be executed.
+A cron job runs hourly to execute scheduled exports and groups.
