@@ -81,6 +81,7 @@ class TestBaseExportAsync(common.TransactionCase):
         new_attachment = self.env["ir.attachment"].search([]) - attachments
         self.assertEqual(len(new_mail), 1)
         self.assertEqual(new_attachment.name, "res.partner.xls")
+        self.assertTrue(new_attachment.datas)
 
     def test_cron_delete(self):
         """Check that cron delete attachment after TTL"""
