@@ -117,3 +117,18 @@ class TestBaseExportAsync(common.TransactionCase):
         self.assertTrue(new_attachment.access_token)
         new_mail = self.env["mail.mail"].search([]) - mails
         self.assertIn("&amp;access_token=", new_mail.body)
+
+    def test_export_xls_no_request_context(self):
+        """Check that Excel export works in job runner context without HTTP request"""
+        params = json.loads(data_xls.get("data"))
+        mails = self.env["mail.mail"].search([])
+        attachments = self.env["ir.attachment"].search([])
+        # Simulate job runner context by temporarily removing the request mock
+        with patch("odoo.http.request", None):
+            self.delay_export_obj.export(params)
+        new_mail = self.env["mail.mail"].search([]) - mails
+        new_attachment = self.env["ir.attachment"].search([]) - attachments
+        self.assertEqual(len(new_mail), 1)
+        self.assertEqual(new_attachment.name, "res.partner.xls")
+        # Verify that attachment has actual Excel data
+        self.assertTrue(new_attachment.datas)

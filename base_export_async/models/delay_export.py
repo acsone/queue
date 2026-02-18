@@ -4,11 +4,13 @@
 import base64
 import json
 import operator
+from unittest.mock import Mock
 
 from dateutil.relativedelta import relativedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+from odoo.http import request
 
 from odoo.addons.web.controllers.export import CSVExport, ExcelExport
 
@@ -57,12 +59,28 @@ class DelayExport(models.Model):
         else:
             columns_headers = [val["label"].strip() for val in fields_name]
 
-        if export_format == "csv":
-            csv = CSVExport()
-            return csv.from_data(columns_headers, import_data)
-        else:
-            xls = ExcelExport()
-            return xls.from_data(columns_headers, import_data)
+        # CSVExport and ExcelExport need request.env
+        # In cron/delayed job context, mock it if not available
+        mock_request = None
+        if request is None:
+            import odoo
+
+            mock_request = Mock()
+            mock_request.env = self.env
+            odoo.http.request = mock_request
+        try:
+            if export_format == "csv":
+                csv = CSVExport()
+                return csv.from_data(columns_headers, import_data)
+            else:
+                xls = ExcelExport()
+                return xls.from_data(columns_headers, import_data)
+        finally:
+            # Clean up mock if we created it
+            if mock_request is not None:
+                import odoo
+
+                odoo.http.request = None
 
     @api.model
     def export(self, params):
