@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
-from odoo.addons.web.controllers.export import CSVExport, ExcelExport
+from ..export import CSVExport, ExcelExport
 
 
 class DelayExport(models.Model):
@@ -58,11 +58,8 @@ class DelayExport(models.Model):
             columns_headers = [val["label"].strip() for val in fields_name]
 
         if export_format == "csv":
-            csv = CSVExport()
-            return csv.from_data(columns_headers, import_data)
-        else:
-            xls = ExcelExport()
-            return xls.from_data(columns_headers, import_data)
+            return CSVExport().from_data(columns_headers, import_data)
+        return ExcelExport(self.env).from_data(columns_headers, import_data)
 
     @api.model
     def export(self, params):

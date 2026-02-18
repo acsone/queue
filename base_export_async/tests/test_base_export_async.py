@@ -2,16 +2,12 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 import json
-from unittest import mock
-from unittest.mock import patch
 
 import freezegun
 from dateutil.relativedelta import relativedelta
 
 import odoo.tests.common as common
 from odoo import fields
-
-from odoo.addons.web.controllers.export import ExcelExport
 
 data_csv = {
     "data": """{"format": "csv", "model": "res.partner",
@@ -47,10 +43,6 @@ class TestBaseExportAsync(common.TransactionCase):
         super().setUp()
         self.delay_export_obj = self.env["delay.export"]
         self.job_obj = self.env["queue.job"]
-        with patch("odoo.http._request_stack") as mock_request_stack:
-            mock_request = mock.Mock(env=self.env)
-            mock_request_stack.push(mock_request)
-            self.addCleanup(mock_request_stack.pop)
 
     def test_delay_export(self):
         """Check that the call create a new JOB"""
@@ -75,12 +67,12 @@ class TestBaseExportAsync(common.TransactionCase):
         params = json.loads(data_xls.get("data"))
         mails = self.env["mail.mail"].search([])
         attachments = self.env["ir.attachment"].search([])
-        with patch.object(ExcelExport, "from_data", return_value=b"\x41\x42\x43\x44"):
-            self.delay_export_obj.export(params)
+        self.delay_export_obj.export(params)
         new_mail = self.env["mail.mail"].search([]) - mails
         new_attachment = self.env["ir.attachment"].search([]) - attachments
         self.assertEqual(len(new_mail), 1)
         self.assertEqual(new_attachment.name, "res.partner.xls")
+        self.assertTrue(new_attachment.datas)
 
     def test_cron_delete(self):
         """Check that cron delete attachment after TTL"""
@@ -91,7 +83,7 @@ class TestBaseExportAsync(common.TransactionCase):
         time_to_live = (
             self.env["ir.config_parameter"].sudo().get_param("attachment.ttl", 7)
         )
-        date_today = fields.Datetime.now()
+        date_today = fields.Date.today()
         date_past_ttl = date_today + relativedelta(days=int(time_to_live))
         with freezegun.freeze_time(date_past_ttl):
             self.delay_export_obj.cron_delete()
